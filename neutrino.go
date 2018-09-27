@@ -273,20 +273,19 @@ func (sp *ServerPeer) OnVersion(_ *peer.Peer, msg *wire.MsgVersion) {
 	// on the simulation test network since it is only intended to connect
 	// to specified peers and actively avoids advertising and connecting to
 	// discovered peers.
-	if sp.server.chainParams.Net != chaincfg.SimNetParams.Net {
-		addrManager := sp.server.addrManager
-		// Request known addresses if the server address manager needs
-		// more and the peer has a protocol version new enough to
-		// include a timestamp with addresses.
-		hasTimestamp := sp.ProtocolVersion() >=
-			wire.NetAddressTimeVersion
-		if addrManager.NeedMoreAddresses() && hasTimestamp {
-			sp.QueueMessage(wire.NewMsgGetAddr(), nil)
-		}
-
-		// Mark the address as a known good address.
-		addrManager.Good(sp.NA())
+	addrManager := sp.server.addrManager
+	// Request known addresses if the server address manager needs
+	// more and the peer has a protocol version new enough to
+	// include a timestamp with addresses.
+	hasTimestamp := sp.ProtocolVersion() >=
+		wire.NetAddressTimeVersion
+	if addrManager.NeedMoreAddresses() && hasTimestamp {
+		sp.QueueMessage(wire.NewMsgGetAddr(), nil)
 	}
+
+	// Mark the address as a known good address.
+	addrManager.Good(sp.NA())
+
 
 	// Add valid peer to the server.
 	sp.server.AddPeer(sp)
@@ -360,9 +359,6 @@ func (sp *ServerPeer) OnAddr(_ *peer.Peer, msg *wire.MsgAddr) {
 	// helps prevent the network from becoming another public test network
 	// since it will not be able to learn about other peers that have not
 	// specifically been provided.
-	if sp.server.chainParams.Net == chaincfg.SimNetParams.Net {
-		return
-	}
 
 	// Ignore old style addresses which don't include a timestamp.
 	if sp.ProtocolVersion() < wire.NetAddressTimeVersion {
@@ -654,45 +650,43 @@ func NewChainService(cfg Config) (*ChainService, error) {
 	// connect-only mode since it is only intended to connect to specified
 	// peers and actively avoid advertising and connecting to discovered
 	// peers in order to prevent it from becoming a public test network.
-	var newAddressFunc func() (net.Addr, error)
-	if s.chainParams.Net != chaincfg.SimNetParams.Net {
-		newAddressFunc = func() (net.Addr, error) {
-			for tries := 0; tries < 100; tries++ {
-				addr := s.addrManager.GetAddress()
-				if addr == nil {
-					break
-				}
-
-				// Address will not be invalid, local or unroutable
-				// because addrmanager rejects those on addition.
-				// Just check that we don't already have an address
-				// in the same group so that we are not connecting
-				// to the same network segment at the expense of
-				// others.
-				key := addrmgr.GroupKey(addr.NetAddress())
-				if s.OutboundGroupCount(key) != 0 {
-					continue
-				}
-
-				// only allow recent nodes (10mins) after we failed 30
-				// times
-				if tries < 30 && time.Since(addr.LastAttempt()) < 10*time.Minute {
-					continue
-				}
-
-				// allow nondefault ports after 50 failed tries.
-				if tries < 50 && fmt.Sprintf("%d", addr.NetAddress().Port) !=
-					s.chainParams.DefaultPort {
-					continue
-				}
-
-				addrString := addrmgr.NetAddressKey(addr.NetAddress())
-				return s.addrStringToNetAddr(addrString)
+	var newAddressFunc = func() (net.Addr, error) {
+		for tries := 0; tries < 100; tries++ {
+			addr := s.addrManager.GetAddress()
+			if addr == nil {
+				break
 			}
 
-			return nil, errors.New("no valid connect address")
+			// Address will not be invalid, local or unroutable
+			// because addrmanager rejects those on addition.
+			// Just check that we don't already have an address
+			// in the same group so that we are not connecting
+			// to the same network segment at the expense of
+			// others.
+			key := addrmgr.GroupKey(addr.NetAddress())
+			if s.OutboundGroupCount(key) != 0 {
+				continue
+			}
+
+			// only allow recent nodes (10mins) after we failed 30
+			// times
+			if tries < 30 && time.Since(addr.LastAttempt()) < 10*time.Minute {
+				continue
+			}
+
+			// allow nondefault ports after 50 failed tries.
+			if tries < 50 && fmt.Sprintf("%d", addr.NetAddress().Port) !=
+				s.chainParams.DefaultPort {
+				continue
+			}
+
+			addrString := addrmgr.NetAddressKey(addr.NetAddress())
+			return s.addrStringToNetAddr(addrString)
 		}
+
+		return nil, errors.New("no valid connect address")
 	}
+
 
 	cmgrCfg := &connmgr.Config{
 		RetryDuration:  ConnectionRetryInterval,
